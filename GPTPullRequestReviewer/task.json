@@ -1,0 +1,51 @@
+{
+  "id": "b42fa530-c4a6-11ed-87f6-d1f44a1fead1",
+  "name": "GPTPullRequestReviewer",
+  "friendlyName": "Review PullRequest by GPT",
+  "description": "This task use OpenAi GPT model to review PullRequests",
+  "author": "Shailesh Singh",
+  "helpMarkDown": "[More Information](https://github.com/shailesh/AzureGPT-PRReviewer)",
+  "category": "Utility",
+  "visibility": [
+    "Build"
+  ],
+  "demands": [],
+  "version": {
+    "Major": "0",
+    "Minor": "8",
+    "Patch": "3"
+  },
+  "minimumAgentVersion": "1.95.0",
+  "instanceNameFormat": "GPTPullRequestReviewer $(message)",
+  "inputs": [
+    {
+      "name": "api_key",
+      "type": "string",
+      "label": "OpenAi Api key",
+      "defaultValue": "",
+      "required": true,
+      "helpMarkDown": "Api key of OpenAi."
+    },
+    {
+      "name": "custom_oi_endpoint",
+      "type": "string",
+      "label": "Custom OpenApi Endpoint",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Custom OpenApi Endpoint, leave empty to use default endpoint. (optional)"
+    },
+    {
+      "name": "support_self_signed_certificate",
+      "type": "boolean",
+      "label": "Support self-signed certificate",
+      "defaultValue": "false",
+      "required": false,
+      "helpMarkDown": "Select this option to support self-signed certificate."
+    }
+  ],
+  "execution": {
+    "Node10": {
+      "target": "review.js"
+    }
+  }
+}

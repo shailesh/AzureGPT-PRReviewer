@@ -1,0 +1,55 @@
+{
+    "manifestVersion": 1,
+    "id": "GPTPullRequestReviewer",
+    "name": "GPT Pull Request Reviewer",
+    "version": "0.0.1",
+    "publisher": "AzureGPT-PRReviewer",
+    "galleryFlags": [
+        "Public",
+        "Preview"
+    ],
+    "targets": [
+        {
+            "id": "Microsoft.VisualStudio.Services"
+        }
+    ],    
+    "description": "A task that review Pull Request using GPT model from OpenAI",
+    "categories": [
+        "Azure Pipelines"
+    ],
+    "icons": {
+        "default": "images/icon.png"        
+    },
+    "tags": [
+        "OpenAI",
+        "GPT",
+        "pullRequest",
+        "review"
+    ],
+    "files": [
+        {
+            "path": "GPTPullRequestReviewer"
+        }
+    ],
+    "repository" : {
+        "type" : "git",
+        "uri" : "https://github.com/shailesh/AzureGPT-PRReviewer"
+    },
+    "content": {
+        "details": {
+            "path": "overview.md"
+        }
+    },
+    "contributions": [
+        {
+            "id": "GPTPullRequestReviewer",
+            "type": "shailesh.vss-distributed-task.task",
+            "targets": [
+                "shailesh.vss-distributed-task.tasks"
+            ],
+            "properties": {
+                "name": "GPTPullRequestReviewer"
+            }
+        }
+    ]
+}

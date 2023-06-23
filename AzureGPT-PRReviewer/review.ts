@@ -1,84 +1,70 @@
-import tl from 'azure-pipelines-task-lib/task';
-import fetch from 'node-fetch';
-import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
-import binaryExtensions from 'binary-extensions';
-import { AzureOpenAIClient, AzureKeyCredential } from '@azure/openai';
-import { Configuration, OpenAIApi } from 'openai';
-import https from 'https';
+import tl = require('azure-pipelines-task-lib/task');
+import fetch = require('node-fetch');
+import simpleGit = require('simple-git');
+import binaryExtensions = require('binary-extensions');
+const { Configuration, OpenAIApi } = require("openai");
+const https = require("https");
 
-interface PullRequestThreadContext {
-  filePath: string;
-}
-
-interface PullRequestComment {
-  parentCommentId: number;
-  content: string;
-  commentType: number;
-}
-
-interface PullRequestThread {
-  id: string;
-  threadContext: PullRequestThreadContext | null;
-}
-
-interface PullRequestThreadsResponse {
-  value: PullRequestThread[];
-}
-
-interface PullRequestCommentResponse {
-  value: PullRequestComment[];
-}
-
-const gitOptions: Partial<SimpleGitOptions> = {
+const gitOptions: Partial<simpleGit.SimpleGitOptions> = {
   baseDir: `${tl.getVariable('System.DefaultWorkingDirectory')}`,
   binary: 'git'
 };
 
-const apiKey: string = tl.getInput('api_key', true);
-const customOpenAIEndpoint: string = tl.getInput('custom_oi_endpoint');
-const modelName = 'gpt-35-turbo';
-
-const openAiConfiguration = new Configuration({
-  apiKey: apiKey
-});
-
-const openai = new OpenAIApi(openAiConfiguration);
-const azure_open_api = new AzureOpenAIClient(customOpenAIEndpoint, new AzureKeyCredential(apiKey));
-
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: !tl.getBoolInput('support_self_signed_certificate')
-});
-
-const git: SimpleGit = simpleGit(gitOptions);
-const targetBranch: string = getTargetBranchName();
+let openai: any;
+let azureOpenai: any;
+let git: simpleGit.SimpleGit;
+let targetBranch: string;
+let httpsAgent: any;
+var apiKey: any;
+var aoiEndpoint: any;
 
 async function run() {
   try {
     if (tl.getVariable('Build.Reason') !== 'PullRequest') {
-      tl.setResult(tl.TaskResult.Skipped, 'This task should be run only when the build is triggered from a Pull Request.');
+      tl.setResult(tl.TaskResult.Skipped, "This task should be run only when the build is triggered from a Pull Request.");
       return;
     }
 
-    if (!apiKey) {
-      tl.setResult(tl.TaskResult.Failed, 'No API key provided!');
+    const supportSelfSignedCertificate = tl.getBoolInput('support_self_signed_certificate');
+    apiKey = tl.getInput('api_key', true);
+    aoiEndpoint = tl.getInput('aoi_endpoint');
+    
+    if (apiKey == undefined) {
+      tl.setResult(tl.TaskResult.Failed, 'No Api Key provided!');
       return;
     }
 
-    const filesNames = await getChangedFiles(targetBranch);
+    if (aoiEndpoint == undefined) {
+      const openAiConfiguration = new Configuration({
+        apiKey: apiKey,
+      });
+      
+      openai = new OpenAIApi(openAiConfiguration);
+    }
 
-    await deleteExistingComments();
+    httpsAgent = new https.Agent({
+      rejectUnauthorized: !supportSelfSignedCertificate
+    });
+
+    git = simpleGit.simpleGit(gitOptions);
+    targetBranch = getTargetBranchName();
+
+    const filesNames = await GetChangedFiles(targetBranch);
+
+    await DeleteExistingComments();
 
     for (const fileName of filesNames) {
-      await reviewFile(fileName);
+      await reviewFile(fileName)
     }
 
-    tl.setResult(tl.TaskResult.Succeeded, 'Pull Request reviewed.');
-  } catch (err: any) {
+    tl.setResult(tl.TaskResult.Succeeded, "Pull Request reviewed.");
+  }
+  catch (err: any) {
     tl.setResult(tl.TaskResult.Failed, err.message);
   }
 }
 
-async function getChangedFiles(targetBranch: string): Promise<string[]> {
+async function GetChangedFiles(targetBranch: string) {
   await git.addConfig('core.pager', 'cat');
   await git.addConfig('core.quotepath', 'false');
   await git.fetch();
@@ -87,219 +73,171 @@ async function getChangedFiles(targetBranch: string): Promise<string[]> {
   const files = diffs.split('\n').filter(line => line.trim().length > 0);
   const nonBinaryFiles = files.filter(file => !binaryExtensions.includes(getFileExtension(file)));
 
-  console.log(`Changed Files (excluding binary files): \n${nonBinaryFiles.join('\n')}`);
+  console.log(`Changed Files (excluding binary files) : \n ${nonBinaryFiles.join('\n')}`);
 
   return nonBinaryFiles;
 }
 
-async function callOpenAIModel(prompt: string) {
-  try {
-    const response = await openai.createCompletion({
-      model: 'text-davinci-003',
-      prompt: prompt,
-      max_tokens: 500
-    });
-    return response.data.choices;
-  } catch (error: any) {
-    handleErrorResponse(error);
-  }
-}
-
-async function callAzureOpenAPI(modelName: string, prompt: string) {
-  try {
-    const response = await azure_open_api.getCompletions(modelName, prompt, {
-      maxTokens: 500
-    });
-    return response.data.choices;
-  } catch (error: any) {
-    handleErrorResponse(error);
-  }
-}
-
 async function reviewFile(fileName: string) {
-  const content = await git.show([targetBranch, fileName]);
+  console.log(`Start reviewing ${fileName} ...`);
 
-  const prompt = `Review the following file: ${fileName}\n\n${content}`;
-  const commentPromises = [];
-  if (customOpenAIEndpoint){
-    const azureOpenAPIChoices = await callAzureOpenAPI(modelName, prompt);
-    if (azureOpenAPIChoices.length > 0) {
-      const azureOpenAPIComment = `**Azure OpenAI Model Output:**\n${azureOpenAPIChoices[0].text}`;
-      commentPromises.push(addCommentToPR(fileName, azureOpenAPIComment));
+  const patch = await git.diff([targetBranch, '--', fileName]);
+
+  const prompt = `
+          Act as a code reviewer of a Pull Request, providing feedback on the code changes below.
+          You are provided with the Pull Request changes in a patch format.
+          Each patch entry has the commit message in the Subject line followed by the code changes (diffs) in a unidiff format.
+          
+          As a code reviewer, your task is:
+          - Review only added, edited or deleted lines.
+          - Non changed code should not be reviewed
+          - If there's no bugs, write 'No feedback'.
+          - Use bullet points if you have multiple comments.
+          
+          Patch of the Pull Request to review:
+          ${patch}
+          `;
+
+  try {
+    let choices: any;
+
+    if (aoiEndpoint == undefined) {
+      const response = await openai.createCompletion({
+        model: "text-davinci-003",
+        prompt: prompt,
+        max_tokens: 500
+      });
+
+      choices = response.data.choices
     }
-  }else{
-    const openAIChoices = await callOpenAIModel(prompt);
-    if (openAIChoices.length > 0) {
-      const openAIComment = `**OpenAI Model Output:**\n${openAIChoices[0].text}`;
-      commentPromises.push(addCommentToPR(fileName, openAIComment));
-    }
-  }
-  await Promise.all(commentPromises);
-}
-
-async function addCommentToPR(filePath: string, content: string) {
-  const prId = tl.getVariable('System.PullRequest.PullRequestId');
-
-  if (!prId) {
-    console.warn('No Pull Request ID found. Skipping comment addition.');
-    return;
-  }
-
-  const url = `${tl.getVariable('System.TeamFoundationCollectionUri')}${tl.getVariable(
-    'System.TeamProject'
-  )}/_apis/git/repositories/${tl.getVariable('Build.Repository.ID')}/pullrequests/${prId}/threads`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${tl.getEndpointAuthorizationParameter('SYSTEMVSSCONNECTION', 'AccessToken')}`
-    },
-    agent: httpsAgent
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to retrieve threads for Pull Request: ${response.statusText}`);
-  }
-
-  const threadsResponse: PullRequestThreadsResponse = await response.json();
-  const threads = threadsResponse.value;
-  const threadContext: PullRequestThreadContext = { filePath };
-
-  const threadExists = threads.some(thread => {
-    const isSameContext = thread.threadContext && thread.threadContext.filePath === filePath;
-    return isSameContext && thread.id.startsWith('code-review-bot');
-  });
-
-  if (threadExists) {
-    console.warn(`A thread already exists for file: ${filePath}. Skipping comment addition.`);
-    return;
-  }
-
-  const comment: PullRequestComment = {
-    parentCommentId: -1,
-    content,
-    commentType: 1 // CommentType 1 indicates a regular comment
-  };
-
-  const thread: PullRequestThread = {
-    id: `code-review-bot-${Date.now().toString()}`,
-    threadContext,
-  };
-
-  thread.threadContext = threadContext;
-
-  const commentUrl = `${url}/${thread.id}/comments`;
-
-  const commentResponse = await fetch(commentUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${tl.getEndpointAuthorizationParameter('SYSTEMVSSCONNECTION', 'AccessToken')}`
-    },
-    body: JSON.stringify(comment),
-    agent: httpsAgent
-  });
-
-  if (!commentResponse.ok) {
-    throw new Error(`Failed to add comment to Pull Request: ${commentResponse.statusText}`);
-  }
-}
-
-async function deleteExistingComments() {
-  const prId = tl.getVariable('System.PullRequest.PullRequestId');
-
-  if (!prId) {
-    console.warn('No Pull Request ID found. Skipping comment deletion.');
-    return;
-  }
-
-  const url = `${tl.getVariable('System.TeamFoundationCollectionUri')}${tl.getVariable(
-    'System.TeamProject'
-  )}/_apis/git/repositories/${tl.getVariable('Build.Repository.ID')}/pullrequests/${prId}/threads`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${tl.getEndpointAuthorizationParameter('SYSTEMVSSCONNECTION', 'AccessToken')}`
-    },
-    agent: httpsAgent
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to retrieve threads for Pull Request: ${response.statusText}`);
-  }
-
-  const threadsResponse: PullRequestThreadsResponse = await response.json();
-  const threads = threadsResponse.value;
-  const deletePromises = [];
-
-  for (const thread of threads) {
-    if (thread.id.startsWith('code-review-bot')) {
-      const commentUrl = `${url}/${thread.id}/comments`;
-
-      const commentResponse = await fetch(commentUrl, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${tl.getEndpointAuthorizationParameter('SYSTEMVSSCONNECTION', 'AccessToken')}`
-        },
+    else {
+      const request = await fetch.default(aoiEndpoint, {
+        method: 'POST',
+        headers: { 'api-key': `${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_tokens: 500,
+          messages: [{
+            role: "user",
+            content: prompt
+          }]
+        }),
         agent: httpsAgent
       });
 
-      if (!commentResponse.ok) {
-        throw new Error(`Failed to retrieve comments for Pull Request: ${commentResponse.statusText}`);
+      const response = await request.json();
+      
+      choices = response.choices;
+    }
+
+    if (choices && choices.length > 0) {
+      const review = aoiEndpoint ? choices[0].message?.content : choices[0].text as string
+
+      if (review.trim() !== "No feedback.") {
+        await AddCommentToPR(fileName, review);
       }
+    }
 
-      const commentResponseJson: PullRequestCommentResponse = await commentResponse.json();
-      const comments = commentResponseJson.value;
+    console.log(`Review of ${fileName} completed.`);
+  }
+  catch (error: any) {
+    if (error.response) {
+      console.log(error.response.status);
+      console.log(error.response.data);
+    } else {
+      console.log(error.message);
+    }
+  }
+}
 
-      for (const comment of comments) {
-        if (comment.content.includes('code-review-bot')) {
-          const deleteCommentUrl = `${commentUrl}/${comment.id}`;
-
-          deletePromises.push(
-            fetch(deleteCommentUrl, {
-              method: 'DELETE',
-              headers: {
-                Authorization: `Bearer ${tl.getEndpointAuthorizationParameter('SYSTEMVSSCONNECTION', 'AccessToken')}`
-              },
-              agent: httpsAgent
-            })
-          );
-        }
+async function AddCommentToPR(fileName: string, comment: string) {
+  const body = {
+    comments: [
+      {
+        parentCommentId: 0,
+        content: comment,
+        commentType: 1
       }
+    ],
+    status: 1,
+    threadContext: {
+      filePath: fileName,
     }
   }
 
-  await Promise.all(deletePromises);
+  const prUrl = `${tl.getVariable('SYSTEM.TEAMFOUNDATIONCOLLECTIONURI')}${tl.getVariable('SYSTEM.TEAMPROJECTID')}/_apis/git/repositories/${tl.getVariable('Build.Repository.Name')}/pullRequests/${tl.getVariable('System.PullRequest.PullRequestId')}/threads?api-version=5.1`
+
+  await fetch.default(prUrl, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${tl.getVariable('SYSTEM.ACCESSTOKEN')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    agent: httpsAgent
+  });
+
+  console.log(`New comment added.`);
 }
 
-function getTargetBranchName(): string {
-  const sourceBranch = tl.getVariable('Build.SourceBranch');
+async function DeleteExistingComments() {
+  console.log("Start deleting existing comments added by the previous Job ...");
 
-  if (sourceBranch && sourceBranch.startsWith('refs/pull/')) {
-    const branchParts = sourceBranch.split('/');
-    return `refs/heads/${branchParts[2]}`;
+  const threadsUrl = `${tl.getVariable('SYSTEM.TEAMFOUNDATIONCOLLECTIONURI')}${tl.getVariable('SYSTEM.TEAMPROJECTID')}/_apis/git/repositories/${tl.getVariable('Build.Repository.Name')}/pullRequests/${tl.getVariable('System.PullRequest.PullRequestId')}/threads?api-version=5.1`;
+  const threadsResponse = await fetch.default(threadsUrl, {
+    headers: { Authorization: `Bearer ${tl.getVariable('SYSTEM.ACCESSTOKEN')}` },
+    agent: httpsAgent
+  });
+
+  const threads = await threadsResponse.json() as { value: [] };
+  const threadsWithContext = threads.value.filter((thread: any) => thread.threadContext !== null);
+
+  const collectionUri = tl.getVariable('SYSTEM.TEAMFOUNDATIONCOLLECTIONURI') as string;
+  const collectionName = getCollectionName(collectionUri);
+  const buildServiceName = `${tl.getVariable('SYSTEM.TEAMPROJECT')} Build Service (${collectionName})`;
+
+  for (const thread of threadsWithContext as any[]) {
+    const commentsUrl = `${tl.getVariable('SYSTEM.TEAMFOUNDATIONCOLLECTIONURI')}${tl.getVariable('SYSTEM.TEAMPROJECTID')}/_apis/git/repositories/${tl.getVariable('Build.Repository.Name')}/pullRequests/${tl.getVariable('System.PullRequest.PullRequestId')}/threads/${thread.id}/comments?api-version=5.1`;
+    const commentsResponse = await fetch.default(commentsUrl, {
+      headers: { Authorization: `Bearer ${tl.getVariable('SYSTEM.ACCESSTOKEN')}` },
+      agent: httpsAgent
+    });
+
+    const comments = await commentsResponse.json() as { value: [] };
+
+    for (const comment of comments.value.filter((comment: any) => comment.author.displayName === buildServiceName) as any[]) {
+      const removeCommentUrl = `${tl.getVariable('SYSTEM.TEAMFOUNDATIONCOLLECTIONURI')}${tl.getVariable('SYSTEM.TEAMPROJECTID')}/_apis/git/repositories/${tl.getVariable('Build.Repository.Name')}/pullRequests/${tl.getVariable('System.PullRequest.PullRequestId')}/threads/${thread.id}/comments/${comment.id}?api-version=5.1`;
+
+      await fetch.default(removeCommentUrl, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${tl.getVariable('SYSTEM.ACCESSTOKEN')}` },
+        agent: httpsAgent
+      });
+    }
   }
 
-  return 'origin/master';
+  console.log("Existing comments deleted.");
 }
 
-function getFileExtension(fileName: string): string {
-  const extensionIndex = fileName.lastIndexOf('.');
-  if (extensionIndex !== -1) {
-    return fileName.substring(extensionIndex + 1);
+function getCollectionName(collectionUri: string) {
+  const collectionUriWithoutProtocol = collectionUri!.replace('https://', '').replace('http://', '');
+
+  if (collectionUriWithoutProtocol.includes('.visualstudio.')) {
+    return collectionUriWithoutProtocol.split('.visualstudio.')[0];
   }
-  return '';
+  else {
+    return collectionUriWithoutProtocol.split('/')[1];
+  }
 }
 
-function handleErrorResponse(error: any) {
-  if (error.response && error.response.data && error.response.data.error) {
-    throw new Error(`OpenAI API Error: ${error.response.data.error.message}`);
-  } else if (error.message) {
-    throw new Error(`Error occurred while calling OpenAI API: ${error.message}`);
-  } else {
-    throw new Error('An unknown error occurred while calling OpenAI API.');
+function getFileExtension(fileName: string) {
+  return fileName.slice((fileName.lastIndexOf(".") - 1 >>> 0) + 2);
+}
+
+function getTargetBranchName() {
+  let targetBranchName = tl.getVariable('System.PullRequest.TargetBranchName');
+
+  if (!targetBranchName) {
+    targetBranchName = tl.getVariable('System.PullRequest.TargetBranch')?.replace('refs/heads/', '');
   }
+
+  return `origin/${targetBranchName}`;
 }
 
 run();

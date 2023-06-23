@@ -1,6 +1,6 @@
 {
   "id": "b42fa530-c4a6-11ed-87f6-d1f44a1fead1",
-  "name": "GPTPullRequestReviewer",
+  "name": "AzureGPT-PRReviewer",
   "friendlyName": "Review PullRequest by GPT",
   "description": "This task use OpenAi GPT model to review PullRequests",
   "author": "Shailesh Singh",
@@ -16,7 +16,7 @@
     "Patch": "3"
   },
   "minimumAgentVersion": "1.95.0",
-  "instanceNameFormat": "GPTPullRequestReviewer $(message)",
+  "instanceNameFormat": "AzureGPT-PRReviewer $(message)",
   "inputs": [
     {
       "name": "api_key",

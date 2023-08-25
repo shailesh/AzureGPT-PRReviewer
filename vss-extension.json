@@ -2,7 +2,7 @@
     "manifestVersion": 1,
     "id": "AzureGPT-PRReviewer",
     "name": "AzureGPT PRReviewer",
-    "version": "0.0.5",
+    "version": "0.0.7",
     "publisher": "AzureGPT-PRReviewer",
     "galleryFlags": [
         "Public",

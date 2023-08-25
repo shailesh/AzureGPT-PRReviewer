@@ -2,7 +2,7 @@
     "manifestVersion": 1,
     "id": "AzureGPT-PRReviewer",
     "name": "AzureGPT PRReviewer",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "publisher": "AzureGPT-PRReviewer",
     "galleryFlags": [
         "Public",
@@ -43,9 +43,9 @@
     "contributions": [
         {
             "id": "AzureGPT-PRReviewer",
-            "type": "ms.vss-distributed-task.task",
+            "type": "shailesh.vss-distributed-task.task",
             "targets": [
-                "ms.vss-distributed-task.tasks"
+                "shailesh.vss-distributed-task.tasks"
             ],
             "properties": {
                 "name": "AzureGPT-PRReviewer"
